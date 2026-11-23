@@ -1,0 +1,64 @@
+# Test, in a personal repository, of the blocking setup planned for the company CI.
+name: CI Blocking Test
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.185.0@sha256:67518c174185a2043fdbed16c70631b79209499b3671178e7194379b48295a0d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # The repo is owned by another user inside the container, so git refuses to read it without this.
+      - name: Allow git in workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Scan with Semgrep
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          semgrep scan
+          --config p/typescript
+          --config p/javascript
+          --baseline-commit "$BASE_SHA"
+          --error
+          --metrics=off
+
+  gitleaks:
+    name: Secret scan (Gitleaks)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Allow git in workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Scan PR commits for secrets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: gitleaks git --log-opts="$BASE_SHA..$HEAD_SHA" --redact --verbose
+
+  # Same logic as the company ci-ok: fails if any needed job failed or was cancelled.
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: [semgrep, gitleaks]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then exit 1; fi
