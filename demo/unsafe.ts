@@ -2,8 +2,8 @@ import express from "express";
 
 const app = express();
 
-// DEMO: unsafe code on purpose, to show Semgrep. Never do this.
+// Safe version: no eval, and the response is JSON (not HTML).
 app.get("/calc", (req, res) => {
   const result = Number(req.query.expr) * 2;
-  res.send(String(result));
+  res.json({ result });
 });
